@@ -1,0 +1,125 @@
+#!/usr/bin/env ruby
+# coding: utf-8
+
+require 'optparse'
+require 'net/http'
+require 'methadone'
+require 'paint'
+require 'ruby-progressbar'
+require 'thread/pool'
+require 'hibp'
+
+class App
+  include Methadone::Main
+
+  class FileNotReadableError < StandardError; end
+
+  def self.print_report(report)
+    puts Paint["\n [☠] BREACHED ACCOUNTS:", :red]
+
+    report.breached_accounts.each_pair do |email, pwned_websites|
+      puts Paint["  * #{email}: Found in: #{pwned_websites.join(', ')}", :red]
+    end
+
+    puts "\n ---------------------------------------- \n\n"
+
+    puts Paint[" [✔] CLEAN ACCOUNTS:", :green]
+
+    report.clean_accounts.each do |email|
+      puts Paint["  * #{email}", :green]
+    end
+
+    puts "\n"
+
+    if !report.failed_accounts.count.zero?
+      puts "---------------------------------------- \n\n"
+
+      puts Paint[" [⚡]  ACCOUNT CHECKS THAT ENCOUNTERED ERROR:", :red]
+
+      report.failed_accounts.each_pair do |email, exception|
+        puts Paint["  * #{email}: #{exception.class}: #{exception.message}", :red]
+      end
+    end
+  end
+
+  main do
+    begin
+
+      if options.include?('no-color')
+        Paint.mode = 0
+      end
+
+      if !options.include?('no-banner')
+        puts Paint[Hibp.banner, :blue]
+      end
+
+      if options[:list]
+        emails = Hibp.extract_emails(options[:list])
+      elsif options[:file]
+        if File.readable?(options[:file])
+          emails = Hibp.extract_emails(File.read(options[:file]))
+        else
+          raise FileNotReadableError.new("#{options[:file]} does not exist or is not readable")
+        end
+      elsif options[:web]
+        http_client = Hibp::HttpClient.new
+        response    = http_client.do_get(options[:web])
+        emails      = Hibp.extract_emails(response.body)
+      else
+        help_now!("You must give me some e-mails to check...")
+      end
+
+      if emails.count.zero?
+        puts Paint[" Sorry, I could not find any emails to check; exiting.", :red]
+        exit!
+      end
+
+      puts Paint[" Checking #{emails.count} #{emails.count == 1 ? 'email' : 'emails'}...\n", :blue]
+
+      progress_bar = ProgressBar.create(:total => emails.count, :format => ' %a %B %p%% %t |%e')
+      report       = Hibp::Report.new
+      thread_pool  = Thread.pool(options[:threads].to_i)
+
+      emails.each do |email|
+        thread_pool.process do
+          begin
+            if pwned_websites = Hibp::Api.breached_account?(email)
+              report.add_breached_account(email, pwned_websites)
+            else
+              report.add_clean_account(email)
+            end
+          rescue => ex
+            report.add_failed_account(email, ex)
+          end
+          progress_bar.increment
+        end
+      end
+
+      thread_pool.shutdown
+      print_report(report)
+
+    rescue Exception => e
+      if !e.is_a?(Interrupt)
+        puts Paint[" [⚡] WARP CORE BREACH!", :red]
+        puts Paint["      * #{e.class}: #{e.message}", :red]
+      else
+        print_report(report) if defined?(report)
+        exit!
+      end
+    end
+  end
+
+  options['threads'] = 3
+
+  on("-l EMAILS", "--list", "List of emails")
+  on("-f FILE", "--file", "Path to a file containing emails")
+  on("-w URL", "--web", "URL to extract emails from")
+  on("-t THREADS", "--threads", "Number of concurrent threads to use")
+  on("--no-banner", "Don't display HIBP banner")
+  on("--no-color", "Don't colorize output")
+
+  description "A simple tool to check a bunch of emails against the haveibeenpwned.com API."
+  version Hibp::VERSION
+
+  go!
+end
