@@ -25,6 +25,6 @@ EOB
   end
 
   def self.extract_emails(haystack)
-    haystack.scan(EMAIL_REGEX)
+    haystack.scan(EMAIL_REGEX).uniq
   end
 end
