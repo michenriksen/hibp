@@ -21,14 +21,6 @@ class App
       puts Paint["  * #{email}: Found in: #{pwned_websites.join(', ')}", :red]
     end
 
-    puts "\n ---------------------------------------- \n\n"
-
-    puts Paint[" [✔] CLEAN ACCOUNTS:", :green]
-
-    report.clean_accounts.each do |email|
-      puts Paint["  * #{email}", :green]
-    end
-
     puts "\n"
 
     if !report.failed_accounts.count.zero?
